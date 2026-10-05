@@ -106,7 +106,7 @@ label.opt { display: flex; align-items: center; gap: 6px; font-size: .9rem; colo
 .ends { display: flex; justify-content: space-between; gap: 8px; font-size: .75rem; color: var(--muted); }
 
 .formula { font-family: var(--font-mono); font-size: .8rem; color: var(--muted);
-  border-top: 1px dashed var(--rule); padding-top: 10px; overflow-x: auto; white-space: nowrap; }
+  border-top: 1px dashed var(--rule); padding-top: 10px; line-height: 1.6; }
 @media (prefers-reduced-motion: reduce) { .mark svg path, .bar i, .feat { transition: none; } }
 </style>
 </head>
@@ -197,9 +197,12 @@ const SPEC = {
   cross: [50, 25, -1],         // 点と長い画の上端の交差角が 50° より小さければソ・ツ
 };
 const RI_WEIGHTS = { ri_vertical: 1, ri_narrow: 1 };
-const WEIGHTS = { dot_angle: 1, dot_layout: 1, long_angle: 1, cross: 0.5, long_direction: 1 };
+// ⑥ 交差角は、フォントでの検証で重み 0〜0.5 のどれでも正解数が変わらなかったので、軽い補助にとどめる
+const WEIGHTS = { dot_angle: 1, dot_layout: 1, long_angle: 1, cross: 0.25 };
+// 書き順オンのとき、⑦の絶対値がこれ以上なら向きだけで決める（長い画が 25% 以上縦に進んでいる）
+const ORDER_CLEAR = 0.5;
 
-// useOrder が true のときだけ、長い画を書いた向き（上→下ならソ・ツ、下→上ならン・シ）も使う
+// useOrder が true のときは、長い画を書いた向き（上→下ならソ・ツ、下→上ならン・シ）を形より優先する
 function classify(strokes, useOrder = false) {
   const longest = strokes.reduce((a, b) => strokeLen(b) > strokeLen(a) ? b : a);
   const dots = strokes.filter(s => s !== longest);
@@ -233,9 +236,10 @@ function classify(strokes, useOrder = false) {
     const ri = sum(RI_WEIGHTS);
     if (ri > 0) return { ...base, label: "リ", score: ri, isRi: true };
   }
-  const score = sum(WEIGHTS);
+  const byOrder = useOrder && Math.abs(f.long_direction) >= ORDER_CLEAR;
+  const score = byOrder ? f.long_direction : sum(WEIGHTS);
   const label = dots.length === 1 ? (score > 0 ? "ソ" : "ン") : (score > 0 ? "ツ" : "シ");
-  return { ...base, label, score, isRi: false };
+  return { ...base, label, score, isRi: false, byOrder };
 }
 
 // ---- 見本（座標は 0〜100、y は下向き） ----
@@ -367,15 +371,20 @@ function evaluate() {
   mark.classList.remove("blank");
   const conf = Math.abs(r.score), pair = strokes.length === 2 ? "ソ・ン・リ" : "シ・ツ";
   main.textContent = `「${r.label}」と判定`;
-  sub.innerHTML = `${pair}の判定　score <span class="score">${r.score >= 0 ? "+" : "−"}${conf.toFixed(2)}</span>　${conf > 1 ? "はっきり書けています" : conf > 0.4 ? "まずまず" : "かなり微妙です"}`;
+  const how = r.byOrder ? "書いた向きで判定" : `${pair}の判定`;
+  sub.innerHTML = `${how}　score <span class="score">${r.score >= 0 ? "+" : "−"}${conf.toFixed(2)}</span>　${r.byOrder ? "書く向きがはっきりしています" : conf > 1 ? "はっきり書けています" : conf > 0.4 ? "まずまず" : "かなり微妙です"}`;
   // 測った生の値（角度・縦横比）もバーの横に出す。リと決まったら ③⑤⑥ は使っていないので薄く表示
   const note = id => r.m[id] == null ? "" : id === "ri_narrow" ? r.m[id].toFixed(2)
     : id === "long_direction" ? (r.m[id] >= 0 ? "上→下" : "下→上") : Math.round(r.m[id]) + "°";
-  FEATS.forEach(([id]) => setBar(id, r.f[id], !(r.isRi && ["dot_angle", "long_angle", "cross", "long_direction"].includes(id)), note(id)));
-  const order = useOrder ? " + ⑦" : "";
-  document.getElementById("formula").textContent = strokes.length === 2
-    ? `① + ② > 0 ならリ。違えば ③ + ⑤ + 0.5×⑥${order} > 0 でソ、それ以外はン`
-    : `③ + ④ + ⑤ + 0.5×⑥${order} > 0 でツ、それ以外はシ`;
+  // 使わなかった特徴は薄く表示（リと決まったら③〜⑦、向きで決まったら形の③〜⑥）
+  const shape = ["dot_angle", "dot_layout", "long_angle", "cross"];
+  const unused = id => (r.isRi && [...shape, "long_direction"].includes(id)) || (r.byOrder && shape.includes(id));
+  FEATS.forEach(([id]) => setBar(id, r.f[id], !unused(id), note(id)));
+  const [so, n, shapeSum] = strokes.length === 2 ? ["ソ", "ン", "③ + ⑤ + 0.25×⑥"] : ["ツ", "シ", "③ + ④ + ⑤ + 0.25×⑥"];
+  const ri = strokes.length === 2 ? "① + ② > 0 ならリ。違えば " : "";
+  document.getElementById("formula").textContent = useOrder
+    ? `${ri}⑦ の向きがはっきりしていれば、上→下で${so}、下→上で${n}。曖昧なときだけ ${shapeSum} > 0 で${so}`
+    : `${ri}${shapeSum} > 0 で${so}、それ以外は${n}`;
   render(r);
 }
 
