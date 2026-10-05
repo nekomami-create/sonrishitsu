@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="手書きの「ソ・ン・リ・シ・ツ」を、書き上がった形だけで判定する Web アプリ">
+<title>ソンリシツ判定くん</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Klee+One:wght@400;600&family=Zen+Kaku+Gothic+New:wght@400;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+html, body { margin: 0; }
+/* Layout: 習字の練習帳。左に升目つきの書き込み欄、右に赤ペン採点と特徴量の内訳。狭い画面では縦積み */
+:root {
+  --paper: #eef1f4;
+  --sheet: #fbfcfd;
+  --ink: #1d2a3a;
+  --muted: #5d6b7c;
+  --rule: #c9d2dc;
+  --red: #c8342b;
+  --so: #2f5d9e;
+  --n: #8a5a12;
+  --ri: #2b7a5f;
+  --font-hand: "Klee One", "Hiragino Mincho ProN", "Yu Mincho", serif;
+  --font-body: "Zen Kaku Gothic New", "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #141a21; --sheet: #1b232c; --ink: #e3e8ee; --muted: #93a1b1;
+    --rule: #34414f; --red: #ff6b5e; --so: #7fa8e6; --n: #e0aa55; --ri: #6cc7a4; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #141a21; --sheet: #1b232c; --ink: #e3e8ee; --muted: #93a1b1;
+  --rule: #34414f; --red: #ff6b5e; --so: #7fa8e6; --n: #e0aa55; --ri: #6cc7a4; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--paper); color: var(--ink);
+  font-family: var(--font-body); font-size: 15px; line-height: 1.7;
+  padding-inline: 16px; padding-block: 16px 32px;
+}
+main { max-width: 900px; margin: 0 auto; display: grid; gap: 14px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+header h1 {
+  font-family: var(--font-hand); font-weight: 600; font-size: 1.15rem;
+  margin: 0; letter-spacing: .04em;
+}
+header p { margin: 0; color: var(--muted); font-size: .8rem; }
+
+.work { display: grid; grid-template-columns: minmax(0, 320px) minmax(0, 1fr); gap: 28px; align-items: start; }
+@media (max-width: 720px) {
+  .work { grid-template-columns: minmax(0, 1fr); }
+  .pad-wrap { width: min(100%, 300px); justify-self: center; }
+}
+
+.pad-wrap { display: grid; gap: 12px; }
+.pad {
+  position: relative; width: 100%; max-width: 100%; aspect-ratio: 1;
+  background: var(--sheet); border: 2px solid var(--ink); border-radius: 2px;
+}
+.pad svg.guide { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.pad svg.guide line { stroke: var(--rule); stroke-width: 1; stroke-dasharray: 4 5; }
+.pad canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
+.pad .tag {
+  position: absolute; top: 8px; left: 10px; font-size: .75rem; letter-spacing: .08em;
+  color: var(--muted); pointer-events: none;
+}
+
+.tools { display: flex; flex-wrap: wrap; gap: 8px; }
+.tools.samples span { font-size: .85rem; color: var(--muted); align-self: center; }
+button {
+  font: inherit; font-size: .9rem; color: var(--ink); background: var(--sheet);
+  border: 1px solid var(--rule); border-radius: 6px; padding: 6px 14px; cursor: pointer;
+}
+button:hover { border-color: var(--ink); }
+button:focus-visible { outline: 2px solid var(--so); outline-offset: 2px; }
+button.primary { background: var(--ink); color: var(--sheet); border-color: var(--ink); }
+.tools.samples { gap: 6px; }
+label.opt { display: flex; align-items: center; gap: 6px; font-size: .9rem; color: var(--muted); cursor: pointer; }
+.tools.samples button { font-family: var(--font-hand); font-weight: 600; font-size: 1.05rem; padding: 2px 11px; }
+
+.result { display: grid; gap: 20px; }
+.verdict { display: flex; align-items: center; gap: 18px; min-height: 120px; }
+.mark { position: relative; width: 112px; height: 112px; flex: none; display: grid; place-items: center; }
+.mark svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.mark svg path { fill: none; stroke: var(--red); stroke-width: 4; stroke-linecap: round;
+  stroke-dasharray: 420; stroke-dashoffset: 0; transition: stroke-dashoffset .5s ease-out; }
+.mark.blank svg path { stroke-dashoffset: 420; }
+.mark .char { font-family: var(--font-hand); font-weight: 600; font-size: 4.2rem; line-height: 1; color: var(--red); }
+.verdict .say { display: grid; gap: 2px; min-width: 0; }
+.verdict .say strong { font-size: 1.15rem; }
+.verdict .say span { color: var(--muted); font-size: .9rem; }
+.score { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+.feats { display: grid; gap: 14px; margin: 0; padding: 0; list-style: none; }
+.feat { display: grid; gap: 4px; transition: opacity .2s; }
+.feat .top { display: flex; justify-content: space-between; gap: 8px; font-size: .9rem; }
+.feat .top .score { color: var(--muted); }
+.feats .group { font-size: .75rem; letter-spacing: .08em; color: var(--muted);
+  border-bottom: 1px dashed var(--rule); padding-bottom: 2px; }
+.feats .group:not(:first-child) { margin-top: 6px; }
+.bar { position: relative; height: 10px; background: var(--sheet); border: 1px solid var(--rule); border-radius: 5px; }
+.bar::after { content: ""; position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: var(--muted); }
+.bar i { position: absolute; top: 1px; bottom: 1px; border-radius: 3px; transition: left .3s, width .3s; }
+.ends { display: flex; justify-content: space-between; gap: 8px; font-size: .75rem; color: var(--muted); }
+
+.formula { font-family: var(--font-mono); font-size: .8rem; color: var(--muted);
+  border-top: 1px dashed var(--rule); padding-top: 10px; overflow-x: auto; white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .mark svg path, .bar i, .feat { transition: none; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>ソンリシツ判定くん</h1>
+    <p>ソ・ン・リは2画、シ・ツは3画。<span id="modeNote">書き順・向きは見ません</span></p>
+  </header>
+
+  <section class="work">
+    <div class="pad-wrap">
+      <div class="pad" id="pad">
+        <svg class="guide" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+          <line x1="50" y1="0" x2="50" y2="100" vector-effect="non-scaling-stroke"></line>
+          <line x1="0" y1="50" x2="100" y2="50" vector-effect="non-scaling-stroke"></line>
+        </svg>
+        <canvas id="cv" aria-label="手書き入力欄"></canvas>
+        <span class="tag" id="tag">見本</span>
+      </div>
+      <div class="tools">
+        <button id="undo">一画戻す</button>
+        <button id="clear" class="primary">消して書く</button>
+      </div>
+      <div class="tools samples">
+        <span>見本</span>
+        <button data-sample="ソ">ソ</button>
+        <button data-sample="ン">ン</button>
+        <button data-sample="リ">リ</button>
+        <button data-sample="シ">シ</button>
+        <button data-sample="ツ">ツ</button>
+      </div>
+      <label class="opt"><input type="checkbox" id="useOrder"> 書き順（書く向き）も判定に使う</label>
+    </div>
+
+    <div class="result">
+      <div class="verdict">
+        <div class="mark blank" id="mark">
+          <svg viewBox="0 0 112 112" aria-hidden="true">
+            <path d="M58 8 C 22 6, 6 34, 10 62 C 14 94, 52 108, 80 98 C 104 88, 110 56, 98 32 C 88 14, 66 6, 46 10"></path>
+          </svg>
+          <span class="char" id="char"></span>
+        </div>
+        <div class="say">
+          <strong id="sayMain">書いてみてください</strong>
+          <span id="saySub">ソ・ン・リは2画、シ・ツは3画</span>
+        </div>
+      </div>
+
+      <ul class="feats" id="feats"></ul>
+      <div class="formula" id="formula"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+// ---- 判定ロジック（tools/so_n.py と同じ計算。書き順・向きは使わない） ----
+const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+const strokeLen = s => s.slice(1).reduce((t, p, i) => t + dist(s[i], p), 0);
+const centroid = s => [s.reduce((t, p) => t + p[0], 0) / s.length, s.reduce((t, p) => t + p[1], 0) / s.length];
+const clamp = v => Math.max(-1, Math.min(1, v));
+const DEG = 180 / Math.PI;
+// a-b が水平から何度立っているか（0〜90°）。向きは見ない
+const tilt = (a, b) => Math.atan2(Math.abs(b[1] - a[1]), Math.abs(b[0] - a[0])) * DEG;
+// 向きのない直線の角度（0〜180°）と、2直線の交差角（0〜90°）
+const lineDeg = (a, b) => ((Math.atan2(b[1] - a[1], b[0] - a[0]) * DEG) % 180 + 180) % 180;
+const crossDeg = (d1, d2) => { const d = Math.abs(d1 - d2) % 180; return Math.min(d, 180 - d); };
+
+// 長い画の上側の端と、そこから全長の 20% 進んだ点
+function topSegment(stroke, ratio = 0.2) {
+  const pts = stroke[0][1] <= stroke[stroke.length - 1][1] ? stroke : [...stroke].reverse();
+  const goal = strokeLen(pts) * ratio;
+  let walked = 0;
+  for (let i = 1; i < pts.length; i++) {
+    walked += dist(pts[i - 1], pts[i]);
+    if (walked >= goal) return [pts[0], pts[i]];
+  }
+  return [pts[0], pts[pts.length - 1]];
+}
+
+// 特徴名: [境目, ±1 になるまでの幅, 向き]。境目は和文フォント 36 書体で測った値の中間（font_test.py）
+const SPEC = {
+  ri_vertical: [68, 12, 1],    // 点（リの左の画）が 68° より立っていればリ
+  ri_narrow: [0.76, 0.15, -1], // 字の幅が高さの 76% より細ければリ
+  dot_angle: [45, 15, 1],      // 点が 45° より立っていればソ・ツ
+  dot_layout: [40, 20, -1],    // 2つの点を結ぶ線が 40° より寝ていればツ
+  long_angle: [45, 10, 1],     // 長い画の端から端が 45° より立っていればソ・ツ
+  cross: [50, 25, -1],         // 点と長い画の上端の交差角が 50° より小さければソ・ツ
+};
+const RI_WEIGHTS = { ri_vertical: 1, ri_narrow: 1 };
+const WEIGHTS = { dot_angle: 1, dot_layout: 1, long_angle: 1, cross: 0.5, long_direction: 1 };
+
+// useOrder が true のときだけ、長い画を書いた向き（上→下ならソ・ツ、下→上ならン・シ）も使う
+function classify(strokes, useOrder = false) {
+  const longest = strokes.reduce((a, b) => strokeLen(b) > strokeLen(a) ? b : a);
+  const dots = strokes.filter(s => s !== longest);
+  const xs = strokes.flat().map(p => p[0]), ys = strokes.flat().map(p => p[1]);
+  const box = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+  const top = topSegment(longest), chord = [longest[0], longest[longest.length - 1]];
+  const avg = fn => dots.reduce((t, d) => t + fn(d), 0) / dots.length;
+  const m = {
+    dot_angle: avg(d => tilt(d[0], d[d.length - 1])),
+    long_angle: tilt(chord[0], chord[1]),
+    cross: avg(d => crossDeg(lineDeg(d[0], d[d.length - 1]), lineDeg(top[0], top[1]))),
+  };
+  let centers = null;
+  if (dots.length === 2) {
+    centers = dots.map(centroid);
+    m.dot_layout = tilt(centers[0], centers[1]);
+  } else {
+    m.ri_vertical = m.dot_angle;
+    m.ri_narrow = (box[2] - box[0]) / ((box[3] - box[1]) || 1);
+  }
+  const f = {};
+  for (const k in m) { const [border, span, sign] = SPEC[k]; f[k] = clamp(sign * (m[k] - border) / span); }
+  if (useOrder) {
+    // 書き始め→書き終わりの縦の進み具合（+1 で真下へ、−1 で真上へ）。半分以上下へ進めば +1
+    m.long_direction = (chord[1][1] - chord[0][1]) / (dist(chord[0], chord[1]) || 1);
+    f.long_direction = clamp(m.long_direction / 0.5);
+  }
+  const sum = w => Object.keys(w).reduce((t, k) => t + (f[k] == null ? 0 : w[k] * f[k]), 0);
+  const base = { m, f, dots, top, chord, centers, box };
+  if (dots.length === 1) {
+    const ri = sum(RI_WEIGHTS);
+    if (ri > 0) return { ...base, label: "リ", score: ri, isRi: true };
+  }
+  const score = sum(WEIGHTS);
+  const label = dots.length === 1 ? (score > 0 ? "ソ" : "ン") : (score > 0 ? "ツ" : "シ");
+  return { ...base, label, score, isRi: false };
+}
+
+// ---- 見本（座標は 0〜100、y は下向き） ----
+const curve = (pts, n = 12) => {
+  // 制御点を Catmull-Rom で補間して手書きっぽい点列にする
+  const out = [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || p2;
+    for (let k = 0; k < n; k++) {
+      const t = k / n, t2 = t * t, t3 = t2 * t;
+      out.push([0, 1].map(j => 0.5 * (2 * p1[j] + (-p0[j] + p2[j]) * t + (2 * p0[j] - 5 * p1[j] + 4 * p2[j] - p3[j]) * t2 + (-p0[j] + 3 * p1[j] - 3 * p2[j] + p3[j]) * t3)));
+    }
+  }
+  out.push(pts[pts.length - 1]);
+  return out;
+};
+const SAMPLES = {
+  "ソ": [[[28, 22], [33, 32], [38, 42]],
+         [[74, 16], [72, 40], [60, 62], [40, 80], [16, 90]]],
+  "ン": [[[24, 26], [32, 30], [40, 36]],
+         [[20, 84], [42, 76], [62, 60], [76, 44], [86, 30]]],
+  "リ": [[[30, 20], [30, 40], [32, 58]],
+         [[68, 14], [68, 50], [64, 72], [50, 90]]],
+  "ツ": [[[22, 22], [25, 30], [28, 38]], [[44, 18], [47, 26], [50, 34]],
+         [[76, 16], [74, 38], [62, 60], [44, 76], [24, 88]]],
+  "シ": [[[18, 20], [26, 24], [34, 30]], [[14, 42], [22, 46], [30, 52]],
+         [[18, 86], [40, 78], [60, 62], [74, 46], [86, 32]]],
+};
+
+// ---- 描画 ----
+const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+let strokes = [], drawing = null, size = 0, isSample = true, last = null;
+
+function resize() {
+  const r = cv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  size = r.width;
+  cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.height * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  render(last);
+}
+function line(a, b, k) { ctx.beginPath(); ctx.moveTo(a[0] * k, a[1] * k); ctx.lineTo(b[0] * k, b[1] * k); ctx.stroke(); }
+function render(result) {
+  ctx.clearRect(0, 0, size, size);
+  const k = size / 100, ink = css("--ink"), red = css("--red");
+  const all = drawing ? [...strokes, drawing] : strokes;
+  ctx.lineCap = "round"; ctx.lineJoin = "round";
+  all.forEach(s => {
+    ctx.strokeStyle = ink; ctx.lineWidth = Math.max(4, size * 0.022);
+    ctx.beginPath();
+    s.forEach((p, j) => j ? ctx.lineTo(p[0] * k, p[1] * k) : ctx.moveTo(p[0] * k, p[1] * k));
+    if (s.length === 1) ctx.lineTo(s[0][0] * k + 0.1, s[0][1] * k);
+    ctx.stroke();
+  });
+  if (!result) return;
+  // 判定に使った線を赤で重ねる（向きのない線なので矢印は付けない）
+  ctx.strokeStyle = red; ctx.lineWidth = 2; ctx.setLineDash([5, 4]);
+  result.dots.forEach(d => line(d[0], d[d.length - 1], k));          // 点の傾き
+  if (result.centers) line(result.centers[0], result.centers[1], k);  // 点の並び
+  line(result.chord[0], result.chord[1], k);                          // 長い画の傾き
+  if (!result.centers) {                                              // 字の縦横比（外接枠）
+    const [x0, y0, x1, y1] = result.box;
+    ctx.globalAlpha = 0.45; ctx.lineWidth = 1;
+    ctx.strokeRect(x0 * k, y0 * k, (x1 - x0) * k, (y1 - y0) * k);
+    ctx.globalAlpha = 1;
+  }
+  ctx.setLineDash([]); ctx.lineWidth = 3;
+  line(result.top[0], result.top[1], k);                              // 交差角に使う長い画の上端
+  if (result.f.long_direction != null) {                              // 書き順オン: 書いた向きの矢印
+    const [a, b] = result.chord, ang = Math.atan2(b[1] - a[1], b[0] - a[0]), h = size * 0.045;
+    ctx.lineWidth = 2.5; ctx.beginPath();
+    ctx.moveTo(b[0] * k - h * Math.cos(ang - 0.45), b[1] * k - h * Math.sin(ang - 0.45));
+    ctx.lineTo(b[0] * k, b[1] * k);
+    ctx.lineTo(b[0] * k - h * Math.cos(ang + 0.45), b[1] * k - h * Math.sin(ang + 0.45));
+    ctx.stroke();
+  }
+}
+
+// ---- 結果表示 ----
+// [id, 名前, マイナス側, プラス側, プラス側の色]
+const FEATS = [
+  ["ri_vertical", "① 点の立ち具合", "68°より寝ている（ソ・ン）", "ほぼ垂直（リ）", "--ri"],
+  ["ri_narrow", "② 字の縦横比（幅÷高さ）", "横に広い（ソ・ン）", "細長い（リ）", "--ri"],
+  ["dot_angle", "③ 点の傾き", "45°より寝ている（ン・シ）", "45°より立つ（ソ・ツ）", "--so"],
+  ["dot_layout", "④ 点の並び", "縦並び（シ）", "横並び（ツ）", "--so"],
+  ["long_angle", "⑤ 長い画の傾き（端から端）", "45°より寝ている（ン・シ）", "45°より立つ（ソ・ツ）", "--so"],
+  ["cross", "⑥ 点と長い画の交差角", "直角に近い（ン・シ）", "平行に近い（ソ・ツ）", "--so"],
+  ["long_direction", "⑦ 長い画を書いた向き（書き順オン）", "下から上へ（ン・シ）", "上から下へ（ソ・ツ）", "--so"],
+];
+const row = ([id, name, l, r]) => `
+  <li class="feat" id="row-${id}">
+    <div class="top"><span>${name}</span><span class="score" id="v-${id}">—</span></div>
+    <div class="bar"><i id="b-${id}"></i></div>
+    <div class="ends"><span>← ${l}</span><span>${r} →</span></div>
+  </li>`;
+document.getElementById("feats").innerHTML =
+  `<li class="group">リかどうか（2画のとき）</li>` + FEATS.slice(0, 2).map(row).join("") +
+  `<li class="group">ソ・ン／シ・ツ</li>` + FEATS.slice(2).map(row).join("");
+
+function setBar(id, v, active = true, note = "") {
+  const bar = document.getElementById("b-" + id), val = document.getElementById("v-" + id);
+  const pos = FEATS.find(x => x[0] === id)[4];
+  document.getElementById("row-" + id).style.opacity = v == null ? 0.35 : active ? 1 : 0.5;
+  if (v == null) { bar.style.width = "0"; bar.style.left = "50%"; val.textContent = "—"; return; }
+  const w = Math.min(1, Math.abs(v)) * 50;
+  bar.style.left = (v >= 0 ? 50 : 50 - w) + "%";
+  bar.style.width = w + "%";
+  bar.style.background = v >= 0 ? css(pos) : css(pos === "--ri" ? "--muted" : "--n");
+  val.textContent = (note ? note + "　" : "") + (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(2);
+}
+
+function evaluate() {
+  const mark = document.getElementById("mark"), ch = document.getElementById("char");
+  const main = document.getElementById("sayMain"), sub = document.getElementById("saySub");
+  document.getElementById("tag").textContent = isSample ? "見本" : "";
+  last = null;
+  if (strokes.length < 2 || strokes.length > 3) {
+    mark.classList.add("blank"); ch.textContent = "";
+    FEATS.forEach(([id]) => setBar(id, null));
+    if (strokes.length < 2) { main.textContent = strokes.length ? "続けて書いてください" : "書いてみてください"; sub.textContent = "ソ・ン・リは2画、シ・ツは3画"; }
+    else { main.textContent = "画数が多すぎます"; sub.textContent = "どの字も3画までです。一画戻すか、消して書き直してください"; }
+    render();
+    return;
+  }
+  const useOrder = document.getElementById("useOrder").checked;
+  const r = classify(strokes, useOrder);
+  last = r;
+  ch.textContent = r.label;
+  mark.classList.remove("blank");
+  const conf = Math.abs(r.score), pair = strokes.length === 2 ? "ソ・ン・リ" : "シ・ツ";
+  main.textContent = `「${r.label}」と判定`;
+  sub.innerHTML = `${pair}の判定　score <span class="score">${r.score >= 0 ? "+" : "−"}${conf.toFixed(2)}</span>　${conf > 1 ? "はっきり書けています" : conf > 0.4 ? "まずまず" : "かなり微妙です"}`;
+  // 測った生の値（角度・縦横比）もバーの横に出す。リと決まったら ③⑤⑥ は使っていないので薄く表示
+  const note = id => r.m[id] == null ? "" : id === "ri_narrow" ? r.m[id].toFixed(2)
+    : id === "long_direction" ? (r.m[id] >= 0 ? "上→下" : "下→上") : Math.round(r.m[id]) + "°";
+  FEATS.forEach(([id]) => setBar(id, r.f[id], !(r.isRi && ["dot_angle", "long_angle", "cross", "long_direction"].includes(id)), note(id)));
+  const order = useOrder ? " + ⑦" : "";
+  document.getElementById("formula").textContent = strokes.length === 2
+    ? `① + ② > 0 ならリ。違えば ③ + ⑤ + 0.5×⑥${order} > 0 でソ、それ以外はン`
+    : `③ + ④ + ⑤ + 0.5×⑥${order} > 0 でツ、それ以外はシ`;
+  render(r);
+}
+
+// ---- 入力 ----
+const toPt = e => { const r = cv.getBoundingClientRect(); return [(e.clientX - r.left) / r.width * 100, (e.clientY - r.top) / r.height * 100]; };
+cv.addEventListener("pointerdown", e => {
+  if (isSample) { strokes = []; isSample = false; last = null; }
+  cv.setPointerCapture(e.pointerId);
+  drawing = [toPt(e)];
+  render();
+});
+cv.addEventListener("pointermove", e => {
+  if (!drawing) return;
+  const p = toPt(e);
+  if (dist(p, drawing[drawing.length - 1]) > 0.6) { drawing.push(p); render(); }
+});
+const finish = () => {
+  if (!drawing) return;
+  if (drawing.length === 1) drawing.push([drawing[0][0] + 0.01, drawing[0][1] + 0.01]);
+  strokes.push(drawing); drawing = null;
+  evaluate();
+};
+cv.addEventListener("pointerup", finish);
+cv.addEventListener("pointercancel", finish);
+
+document.getElementById("undo").onclick = () => { if (isSample) { strokes = []; isSample = false; } else strokes.pop(); evaluate(); };
+document.getElementById("clear").onclick = () => { strokes = []; isSample = false; evaluate(); };
+const loadSample = ch => { strokes = SAMPLES[ch].map(s => curve(s)); isSample = true; evaluate(); };
+document.querySelectorAll("[data-sample]").forEach(b => b.onclick = () => loadSample(b.dataset.sample));
+document.getElementById("useOrder").onchange = e => {
+  document.getElementById("modeNote").textContent = e.target.checked ? "書き順（書く向き）も使います" : "書き順・向きは見ません";
+  evaluate();
+};
+
+window.addEventListener("resize", resize);
+matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", () => evaluate());
+document.fonts?.ready.then(() => evaluate());
+resize();
+loadSample("ソ");
+</script>
+</body>
+</html>
