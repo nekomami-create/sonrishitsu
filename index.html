@@ -46,7 +46,6 @@ header h1 {
   font-family: var(--font-hand); font-weight: 600; font-size: 1.15rem;
   margin: 0; letter-spacing: .04em;
 }
-header p { margin: 0; color: var(--muted); font-size: .8rem; }
 
 .work { display: grid; grid-template-columns: minmax(0, 320px) minmax(0, 1fr); gap: 28px; align-items: start; }
 @media (max-width: 720px) {
@@ -114,7 +113,6 @@ label.opt { display: flex; align-items: center; gap: 6px; font-size: .9rem; colo
 <main>
   <header>
     <h1>ソンリシツ判定くん</h1>
-    <p>ソ・ン・リは2画、シ・ツは3画。<span id="modeNote">書き順・向きは見ません</span></p>
   </header>
 
   <section class="work">
@@ -414,10 +412,7 @@ document.getElementById("undo").onclick = () => { if (isSample) { strokes = []; 
 document.getElementById("clear").onclick = () => { strokes = []; isSample = false; evaluate(); };
 const loadSample = ch => { strokes = SAMPLES[ch].map(s => curve(s)); isSample = true; evaluate(); };
 document.querySelectorAll("[data-sample]").forEach(b => b.onclick = () => loadSample(b.dataset.sample));
-document.getElementById("useOrder").onchange = e => {
-  document.getElementById("modeNote").textContent = e.target.checked ? "書き順（書く向き）も使います" : "書き順・向きは見ません";
-  evaluate();
-};
+document.getElementById("useOrder").onchange = evaluate;
 
 window.addEventListener("resize", resize);
 matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", () => evaluate());
